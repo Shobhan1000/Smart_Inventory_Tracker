@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Box, Button, Typography, Badge, useTheme } from "@mui/material";
+import { Box, Button, Typography, useTheme } from "@mui/material";
 import { tokens } from "../../theme";
 import DownloadOutlinedIcon from "@mui/icons-material/DownloadOutlined";
 import LocalShippingIcon from '@mui/icons-material/LocalShipping';
@@ -22,11 +22,28 @@ const Dashboard = () => {
   const [transactions, setTransactions] = useState([]);
   const [suppliers, setSuppliers] = useState([]);
   const [alerts, setAlerts] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  // Safe color access function
+  const getColor = (colorPath, defaultValue = "#ccc") => {
+    try {
+      const path = colorPath.split('.');
+      let value = colors;
+      for (const key of path) {
+        if (value[key] === undefined) return defaultValue;
+        value = value[key];
+      }
+      return value;
+    } catch (error) {
+      return defaultValue;
+    }
+  };
 
   // Fetch data from backend
   useEffect(() => {
     const fetchData = async () => {
       try {
+        setLoading(true);
         const [itemsRes, transactionsRes, suppliersRes, alertsRes] = await Promise.all([
           fetch("http://localhost:8000/items/"),
           fetch("http://localhost:8000/transactions/"),
@@ -34,22 +51,47 @@ const Dashboard = () => {
           fetch("http://localhost:8000/alerts/"),
         ]);
 
+        if (!itemsRes.ok) throw new Error("Failed to fetch items");
+        if (!transactionsRes.ok) throw new Error("Failed to fetch transactions");
+        if (!suppliersRes.ok) throw new Error("Failed to fetch suppliers");
+        if (!alertsRes.ok) throw new Error("Failed to fetch alerts");
+
         setItems(await itemsRes.json());
         setTransactions(await transactionsRes.json());
         setSuppliers(await suppliersRes.json());
         setAlerts(await alertsRes.json());
       } catch (error) {
         console.error("Error fetching data:", error);
+      } finally {
+        setLoading(false);
       }
     };
 
     fetchData();
   }, []);
 
-  const totalItems = items.reduce((acc, item) => acc + item.quantity, 0);
-  const lowStockItems = items.filter(item => item.quantity <= item.lowStockThreshold).length;
-  const lowStockItemsPercentage = ((lowStockItems/items.length)*100).toPrecision(2);
+  // Calculate statistics
+  const totalItems = items.reduce((acc, item) => acc + (item.quantity || 0), 0);
+  const lowStockItems = items.filter(item => item.quantity <= (item.lowStockThreshold || 0)).length;
+  const lowStockItemsPercentage = items.length > 0 ? ((lowStockItems / items.length) * 100).toFixed(2) : 0;
   const totalSuppliers = suppliers.length;
+
+  // Calculate revenue
+  const calculateRevenue = () => {
+    const today = new Date().toDateString();
+    
+    const todaySales = transactions
+      .filter(t => t && new Date(t.date).toDateString() === today && t.type?.toLowerCase() === "sale")
+      .reduce((acc, t) => acc + (t.amount || 0), 0);
+    
+    const todayPurchases = transactions
+      .filter(t => t && new Date(t.date).toDateString() === today && t.type?.toLowerCase() === "purchase")
+      .reduce((acc, t) => acc + (t.amount || 0), 0);
+    
+    return todaySales - todayPurchases;
+  };
+
+  const todayRevenue = calculateRevenue();
 
   const getDateStr = (offsetDays) => {
     const d = new Date();
@@ -57,39 +99,60 @@ const Dashboard = () => {
     return d.toDateString();
   };
 
-  const sumRevenueForDate = (dateStr) =>
-  transactions
-    .filter(t => new Date(t.date).toDateString() === dateStr && t.type === "Inflow")
-    .reduce((acc, t) => acc + t.amount, 0);
+  const calculateRevenueForDate = (dateStr) => {
+    const sales = transactions
+      .filter(t => t && new Date(t.date).toDateString() === dateStr && t.type?.toLowerCase() === "sale")
+      .reduce((acc, t) => acc + (t.amount || 0), 0);
+    
+    const purchases = transactions
+      .filter(t => t && new Date(t.date).toDateString() === dateStr && t.type?.toLowerCase() === "purchase")
+      .reduce((acc, t) => acc + (t.amount || 0), 0);
+    
+    return sales - purchases;
+  };
 
-  const todayRevenue = sumRevenueForDate(getDateStr(0));
-  const yesterdayRevenue = sumRevenueForDate(getDateStr(-1));
+  const yesterdayRevenue = calculateRevenueForDate(getDateStr(-1));
 
-  let percentageDifference;
-  let trend;
+  let percentageDifference = 0;
+  let trend = "no-change";
 
-  if (yesterdayRevenue === 0) {
-    percentageDifference = todayRevenue === 0 ? 0 : 100;
-    trend = todayRevenue === 0 ? "no-change" : "up";
-  } else {
-    percentageDifference = Math.round(((todayRevenue - yesterdayRevenue) / yesterdayRevenue) * 100);
+  if (yesterdayRevenue !== 0) {
+    percentageDifference = Math.round(((todayRevenue - yesterdayRevenue) / Math.abs(yesterdayRevenue)) * 100);
     trend = percentageDifference > 0 ? "up" : percentageDifference < 0 ? "down" : "no-change";
+  } else if (todayRevenue !== 0) {
+    percentageDifference = 100;
+    trend = "up";
   }
+
+  if (loading) {
+    return (
+      <Box m="20px">
+        <Header title="DASHBOARD" subtitle="Welcome to your inventory dashboard" />
+        <Typography>Loading dashboard data...</Typography>
+      </Box>
+    );
+  }
+
+  // Safe background colors
+  const primaryColor = getColor('primary.400', '#1F2A40');
+  const primary500Color = getColor('primary.500', '#2d3e52');
 
   return (
     <Box m="20px">
       {/* HEADER */}
-      <Box display="flex" justifyContent="space-between" alignItems="center">
+      <Box display="flex" justifyContent="space-between" alignItems="center" flexWrap="wrap" gap={2}>
         <Header title="DASHBOARD" subtitle="Welcome to your inventory dashboard" />
-        <Box>
-          {/* QUICK ACTIONS */}
+        <Box display="flex" gap={1} flexWrap="wrap">
           <Button
             sx={{
-              backgroundColor: "success",
-              color: colors.grey[100],
+              backgroundColor: getColor('greenAccent.600', '#4CAF50'),
+              color: getColor('grey.100', '#ffffff'),
               fontSize: "14px",
               fontWeight: "bold",
               padding: "10px 20px",
+              '&:hover': {
+                backgroundColor: getColor('greenAccent.700', '#45a049'),
+              }
             }}
             onClick={() => navigate("/inventory")}
           >
@@ -98,11 +161,14 @@ const Dashboard = () => {
           </Button>
           <Button
             sx={{
-              backgroundColor: "primary",
-              color: colors.grey[100],
+              backgroundColor: getColor('blueAccent.600', '#2196F3'),
+              color: getColor('grey.100', '#ffffff'),
               fontSize: "14px",
               fontWeight: "bold",
               padding: "10px 20px",
+              '&:hover': {
+                backgroundColor: getColor('blueAccent.700', '#1976D2'),
+              }
             }}
             onClick={() => navigate("/transactions")}
           >
@@ -111,11 +177,14 @@ const Dashboard = () => {
           </Button>
           <Button
             sx={{
-              backgroundColor: "secondary",
-              color: colors.grey[100],
+              backgroundColor: getColor('redAccent.600', '#F44336'),
+              color: getColor('grey.100', '#ffffff'),
               fontSize: "14px",
               fontWeight: "bold",
               padding: "10px 20px",
+              '&:hover': {
+                backgroundColor: getColor('redAccent.700', '#D32F2F'),
+              }
             }}
             onClick={() => navigate("/suppliers")}
           >
@@ -124,11 +193,14 @@ const Dashboard = () => {
           </Button>
           <Button
             sx={{
-              backgroundColor: colors.blueAccent[700],
-              color: colors.grey[100],
+              backgroundColor: getColor('grey.700', '#616161'),
+              color: getColor('grey.100', '#ffffff'),
               fontSize: "14px",
               fontWeight: "bold",
               padding: "10px 20px",
+              '&:hover': {
+                backgroundColor: getColor('grey.800', '#424242'),
+              }
             }}
           >
             <DownloadOutlinedIcon sx={{ mr: "10px" }} />
@@ -138,50 +210,50 @@ const Dashboard = () => {
       </Box>
 
       {/* GRID & CHARTS */}
-      <Box display="grid" gridTemplateColumns="repeat(12, 1fr)" gridAutoRows="140px" gap="20px">
+      <Box display="grid" gridTemplateColumns="repeat(12, 1fr)" gridAutoRows="140px" gap="20px" mt={2}>
         {/* KEY METRICS */}
-        <Box gridColumn="span 3" backgroundColor={colors.primary[400]} display="flex" alignItems="center" justifyContent="center" sx={{ cursor: "pointer" }} onClick={() => navigate("/inventory")}>
+        <Box gridColumn="span 3" backgroundColor={primaryColor} display="flex" alignItems="center" justifyContent="center" sx={{ cursor: "pointer" }} onClick={() => navigate("/inventory")}>
           <StatBox
-            title={totalItems}
+            title={totalItems.toLocaleString()}
             subtitle="Total Items in Stock"
-            icon={<InventoryIcon sx={{ color: colors.greenAccent[600], fontSize: "26px" }} />}
+            icon={<InventoryIcon sx={{ color: getColor('greenAccent.600', '#4CAF50'), fontSize: "26px" }} />}
             showProgress={false}
           />
         </Box>
 
-        <Box gridColumn="span 3" backgroundColor={colors.primary[400]} display="flex" alignItems="center" justifyContent="center" sx={{ cursor: "pointer" }} onClick={() => navigate("/alerts")}>
+        <Box gridColumn="span 3" backgroundColor={primaryColor} display="flex" alignItems="center" justifyContent="center" sx={{ cursor: "pointer" }} onClick={() => navigate("/alerts")}>
           <StatBox
             title={lowStockItems}
             subtitle="Items Low in Stock"
-            progress={lowStockItemsPercentage/100}
-            increase={lowStockItemsPercentage + "%"}
-            icon={<WarningIcon sx={{ color: colors.redAccent[600], fontSize: "26px" }} />}
+            progress={lowStockItemsPercentage / 100}
+            increase={`${lowStockItemsPercentage}%`}
+            icon={<WarningIcon sx={{ color: getColor('redAccent.600', '#F44336'), fontSize: "26px" }} />}
           />
         </Box>
 
-        <Box gridColumn="span 3" backgroundColor={colors.primary[400]} display="flex" alignItems="center" justifyContent="center" sx={{ cursor: "pointer" }} onClick={() => navigate("/suppliers")}>
+        <Box gridColumn="span 3" backgroundColor={primaryColor} display="flex" alignItems="center" justifyContent="center" sx={{ cursor: "pointer" }} onClick={() => navigate("/suppliers")}>
           <StatBox
             title={totalSuppliers}
             subtitle="Total Suppliers"
-            icon={<LocalShippingIcon sx={{ color: colors.greenAccent[600], fontSize: "26px" }} />}
+            icon={<LocalShippingIcon sx={{ color: getColor('blueAccent.600', '#2196F3'), fontSize: "26px" }} />}
             showProgress={false}
           />
         </Box>
 
-        <Box gridColumn="span 3" backgroundColor={colors.primary[400]} display="flex" alignItems="center" justifyContent="center" sx={{ cursor: "pointer" }} onClick={() => navigate("/transactions")}>
+        <Box gridColumn="span 3" backgroundColor={primaryColor} display="flex" alignItems="center" justifyContent="center" sx={{ cursor: "pointer" }} onClick={() => navigate("/transactions")}>
           <StatBox
-            title={`$${todayRevenue}`}
-            subtitle="Revenue Today"
-            icon={<PointOfSaleIcon sx={{ color: colors.greenAccent[600], fontSize: "26px" }} />}
+            title={`$${todayRevenue.toLocaleString()}`}
+            subtitle="Net Revenue Today"
             progress={percentageDifference / 100}
             increase={`${percentageDifference}%`}
-            showProgress={true}
+            trend={trend}
+            icon={<PointOfSaleIcon sx={{ color: getColor('greenAccent.600', '#4CAF50'), fontSize: "26px" }} />}
           />
         </Box>
 
         {/* ROW 2 - CHARTS */}
-        <Box gridColumn="span 8" gridRow="span 2" backgroundColor={colors.primary[400]} p="20px">
-          <Typography variant="h5" fontWeight="600" color={colors.grey[100]} mb="10px">
+        <Box gridColumn="span 8" gridRow="span 2" backgroundColor={primaryColor} p="20px">
+          <Typography variant="h5" fontWeight="600" color={getColor('grey.100', '#ffffff')} mb="10px">
             Stock Level Trends
           </Typography>
           <LineChart isDashboard={true} data={items} />
@@ -190,49 +262,66 @@ const Dashboard = () => {
         <Box
           gridColumn="span 4"
           gridRow="span 2"
-          backgroundColor={colors.primary[400]}
+          backgroundColor={primaryColor}
           overflow="auto"
         >
           <Box
             display="flex"
             justifyContent="space-between"
             alignItems="center"
-            borderBottom={`4px solid ${colors.primary[500]}`}
+            borderBottom={`4px solid ${primary500Color}`}
             p="15px"
           >
-            <Typography color={colors.grey[100]} variant="h5" fontWeight="600">
+            <Typography color={getColor('grey.100', '#ffffff')} variant="h5" fontWeight="600">
               Recent Transactions
+            </Typography>
+            <Typography color={getColor('grey.100', '#ffffff')} variant="body2">
+              {transactions.length} total
             </Typography>
           </Box>
 
-          {transactions.slice(-5).reverse().map((transaction, i) => {
-            const isNegative = transaction.type == "Outflow";
+          {transactions.slice(-5).reverse().map((transaction) => {
+            if (!transaction) return null;
+            
+            const isSale = transaction.type?.toLowerCase() === "sale";
+            const saleColor = getColor('greenAccent.500', '#4CAF50');
+            const purchaseColor = getColor('redAccent.500', '#F44336');
+            const textColor = getColor('grey.100', '#ffffff');
+
             return (
               <Box
-                key={`${transaction.id}-${i}`}
+                key={transaction.id}
                 display="flex"
                 justifyContent="space-between"
                 alignItems="center"
-                borderBottom={`4px solid ${colors.primary[500]}`}
+                borderBottom={`4px solid ${primary500Color}`}
                 p="15px"
               >
                 <Box>
-                  <Typography color={isNegative ? colors.redAccent[500] : colors.greenAccent[500]} variant="h5" fontWeight="600">
-                    {transaction.id}
+                  <Typography 
+                    color={isSale ? saleColor : purchaseColor} 
+                    variant="h5" 
+                    fontWeight="600"
+                  >
+                    {transaction.description || "No description"}
                   </Typography>
-                  <Typography color={colors.grey[100]}>{transaction.description}</Typography>
+                  <Typography color={textColor} variant="body2">
+                    {transaction.quantity || 0} units
+                  </Typography>
                 </Box>
 
-                <Box color={colors.grey[100]}>
-                  {new Date(transaction.date).toLocaleDateString()}
+                <Box color={textColor}>
+                  {transaction.date ? new Date(transaction.date).toLocaleDateString() : "No date"}
                 </Box>
 
                 <Box
-                  backgroundColor={isNegative ? colors.redAccent[500] : colors.greenAccent[500]}
+                  backgroundColor={isSale ? saleColor : purchaseColor}
                   p="5px 10px"
                   borderRadius="4px"
+                  color={textColor}
+                  fontWeight="bold"
                 >
-                  ${Math.abs(transaction.amount)}
+                  {isSale ? "+" : "-"}${Math.abs(transaction.amount || 0)}
                 </Box>
               </Box>
             );
@@ -240,14 +329,61 @@ const Dashboard = () => {
         </Box>
 
         {/* ROW 3 - MORE CHARTS */}
-        <Box gridColumn="span 6" gridRow="span 2" backgroundColor={colors.primary[400]} p="30px" onClick={() => navigate("/analytics")}>
-          <Typography variant="h5" fontWeight="600">Top Selling Items</Typography>
+        <Box gridColumn="span 6" gridRow="span 2" backgroundColor={primaryColor} p="30px" onClick={() => navigate("/analytics")}>
+          <Typography variant="h5" fontWeight="600" color={getColor('grey.100', '#ffffff')}>
+            Top Selling Items
+          </Typography>
           <BarChart isDashboard={true} data={items} />
         </Box>
 
-        <Box gridColumn="span 6" gridRow="span 2" backgroundColor={colors.primary[400]} p="30px" onClick={() => navigate("/forecast")}>
-          <Typography variant="h5" fontWeight="600">Forecast / Demand Prediction</Typography>
-          <LineChart isDashboard={true} data={items} />
+        <Box gridColumn="span 6" gridRow="span 2" backgroundColor={primaryColor} p="30px" onClick={() => navigate("/alerts")}>
+          <Typography variant="h5" fontWeight="600" color={getColor('grey.100', '#ffffff')}>
+            Active Alerts
+          </Typography>
+          <Box mt={2}>
+            {alerts.slice(0, 3).map((alert) => {
+              if (!alert) return null;
+              
+              const isLowStock = alert.type === "Low Stock";
+              const alertColor = isLowStock ? getColor('yellowAccent.500', '#FFA726') : getColor('redAccent.500', '#F44336');
+              const bgColor = getColor('primary.300', '#374151');
+
+              return (
+                <Box
+                  key={alert.id}
+                  display="flex"
+                  alignItems="center"
+                  p="10px"
+                  borderLeft={`4px solid ${alertColor}`}
+                  backgroundColor={bgColor}
+                  mb={1}
+                >
+                  <WarningIcon sx={{ 
+                    color: alertColor,
+                    mr: 1 
+                  }} />
+                  <Box>
+                    <Typography variant="body1" fontWeight="bold" color={getColor('grey.100', '#ffffff')}>
+                      {alert.title || "No title"}
+                    </Typography>
+                    <Typography variant="body2" color={getColor('grey.300', '#D1D5DB')}>
+                      {alert.message || "No message"}
+                    </Typography>
+                  </Box>
+                </Box>
+              );
+            })}
+            {alerts.length === 0 && (
+              <Typography variant="body2" color={getColor('grey.300', '#D1D5DB')} textAlign="center" mt={2}>
+                No active alerts
+              </Typography>
+            )}
+            {alerts.length > 3 && (
+              <Typography variant="body2" color={getColor('blueAccent.500', '#2196F3')} textAlign="center" mt={1}>
+                View all {alerts.length} alerts
+              </Typography>
+            )}
+          </Box>
         </Box>
       </Box>
     </Box>

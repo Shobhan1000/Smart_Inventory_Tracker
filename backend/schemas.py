@@ -1,3 +1,4 @@
+import uuid
 from pydantic import BaseModel, EmailStr
 from typing import Optional
 from datetime import date
@@ -11,7 +12,7 @@ class ItemBase(BaseModel):
     category: str
     quantity: int
     unit: str
-    supplier_id: int
+    supplier_id: uuid.UUID
     lastRestocked: Optional[date] = None
     expiryDate: Optional[date] = None
     lowStockThreshold: int
@@ -26,14 +27,14 @@ class ItemUpdate(BaseModel):
     category: Optional[str] = None
     quantity: Optional[int] = None
     unit: Optional[str] = None
-    supplier_id: Optional[int] = None
+    supplier_id: Optional[uuid.UUID] = None
     lastRestocked: Optional[date] = None
     expiryDate: Optional[date] = None
     lowStockThreshold: Optional[int] = None
 
 
 class Item(ItemBase):
-    id: int
+    id: uuid.UUID
 
     class Config:
         orm_mode = True
@@ -49,7 +50,6 @@ class SupplierBase(BaseModel):
     phoneNumber: Optional[str] = None
     address: Optional[str] = None
     itemsProvided: Optional[str] = None
-    rating: Optional[float] = None
     status: Optional[str] = None
 
 
@@ -64,12 +64,11 @@ class SupplierUpdate(BaseModel):
     phoneNumber: Optional[str] = None
     address: Optional[str] = None
     itemsProvided: Optional[str] = None
-    rating: Optional[float] = None
     status: Optional[str] = None
 
 
 class Supplier(SupplierBase):
-    id: int
+    id: uuid.UUID
 
     class Config:
         orm_mode = True
@@ -86,7 +85,7 @@ class TransactionBase(BaseModel):
     type: str
     category: Optional[str] = None
     status: Optional[str] = None
-    item_id = int
+    item_id: uuid.UUID
 
 
 class TransactionCreate(TransactionBase):
@@ -104,7 +103,7 @@ class TransactionUpdate(BaseModel):
 
 
 class Transaction(TransactionBase):
-    id: int
+    id: uuid.UUID
 
     class Config:
         orm_mode = True
@@ -117,6 +116,7 @@ class AlertBase(BaseModel):
     type: str
     title: str
     message: str
+    item_id: Optional[uuid.UUID] = None
 
 
 class AlertCreate(AlertBase):
@@ -127,13 +127,15 @@ class AlertUpdate(BaseModel):
     type: Optional[str] = None
     title: Optional[str] = None
     message: Optional[str] = None
+    item_id: Optional[uuid.UUID] = None
 
 
 class Alert(AlertBase):
-    id: int
+    id: uuid.UUID
 
     class Config:
         orm_mode = True
+
 
 # -------------------------
 # EVENT SCHEMAS
@@ -149,13 +151,13 @@ class EventCreate(EventBase):
 
 
 class EventUpdate(BaseModel):
-    type: Optional[str] = None
     title: Optional[str] = None
-    message: Optional[str] = None
+    description: Optional[str] = None
+    date: Optional[date] = None
 
 
 class Event(EventBase):
-    id: int
+    id: uuid.UUID
 
     class Config:
         orm_mode = True

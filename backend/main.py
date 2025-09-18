@@ -1,3 +1,4 @@
+import uuid
 from datetime import date
 from fastapi import FastAPI, Depends, HTTPException
 from pydantic import BaseModel
@@ -5,7 +6,7 @@ from typing import List, Optional, Annotated
 from fastapi.middleware.cors import CORSMiddleware
 import pandas as pd
 from statsmodels.tsa.arima.model import ARIMA
-import models, schemas
+import models, schemas, crud
 from database import engine, SessionLocal
 from sqlalchemy.orm import Session
 
@@ -15,60 +16,24 @@ models.Base.metadata.create_all(bind=engine)
 # CORS setup
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://127.0.0.1:3000"
-    ],
+    allow_origins=["*"],  # For development only, restrict in production
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 # -------------------------
-# MODELS
+# MODELS (for forecast endpoint)
 # -------------------------
 
-class Item(BaseModel):
-    itemName: str
-    category: str
-    quantity: int
-    unit: str
-    supplier: str
-    lastRestocked: Optional[date] = None
-    expiryDate: Optional[date] = None
-    lowStockThreshold: int
+class ForecastRequest(BaseModel):
+    product: str
+    currentStock: int
+    salesData: str  # comma-separated numbers
 
-class Supplier(BaseModel):
-    id: int
-    supplierName: str
-    contactPerson: Optional[str] = "Not specified"
-    email: Optional[str] = "No email"
-    phoneNumber: Optional[str] = "No phone"
-    address: Optional[str] = "Address not provided"
-    itemsProvided: Optional[str] = "Various items"
-    rating: Optional[float] = 0
-    status: Optional[str] = "Active"
-
-class Transaction(BaseModel):
-    id: Optional[int] = None
-    date: date
-    description: str
-    amount: float
-    type: str  # "Inflow" or "Outflow"
-    category: Optional[str] = "General"
-    status: Optional[str] = "Completed"
-
-class Alert(BaseModel):
-    id: Optional[int] = None
-    type: str
-    title: str
-    message: str
-
-class Event(BaseModel):
-    id: Optional[int] = None
-    title: str
-    description: str
-    date: date
+class ForecastResponse(BaseModel):
+    product: str
+    forecast: List[float]
 
 # -------------------------
 # POSTGRESQL 
@@ -87,138 +52,78 @@ db_dependency = Annotated[Session, Depends(get_db)]
 # ITEMS ENDPOINTS
 # -------------------------
 
-@app.get("/items/", response_model=List[Item])
-async def list_items(db: Annotated[Session, Depends(get_db)]):
-    # Query all items from the database
-    db_items = db.query(models.Item).all()
-    return db_items
-
-'''@app.post("/items/", response_model=Item)
-async def add_item(item: Item, db: Annotated[Session, Depends(get_db)]):
-    db_item = models.Item(
-        itemName=item.itemName,
-        category=item.category,
-        quantity=item.quantity,
-        unit=item.unit,
-        supplier=item.supplier,
-        lastRestocked=item.lastRestocked,
-        expiryDate=item.expiryDate,
-        lowStockThreshold=item.lowStockThreshold,  # match your model
-    )
-    db.add(db_item)
-    db.commit()
-    db.refresh(db_item)  # make sure id is populated
-    return db_item'''
+@app.get("/items/", response_model=List[schemas.Item])
+async def list_items(db: db_dependency):
+    return db.query(models.Item).all()
 
 @app.post("/items/", response_model=schemas.Item)
-def add_item(item: schemas.ItemCreate, db: Session = Depends(get_db)):
-    db_item = models.Item(**item.dict())
-    db.add(db_item)
-    db.commit()
-    db.refresh(db_item)
-
-    # Check stock after adding
-    if db_item.quantity <= db_item.lowStockThreshold:
-        db_alert = models.Alert(
-            type="warning",
-            title="Low Stock",
-            message=f"{db_item.itemName} is low on stock (only {db_item.quantity} {db_item.unit})",
-            item_id=db_item.id,
-        )
-        db.add(db_alert)
-        db.commit()
-        db.refresh(db_alert)
-
-    return db_item
-
+def add_item(item: schemas.ItemCreate, db: db_dependency):
+    return crud.create_item(db, item)
 
 @app.put("/items/{item_id}", response_model=schemas.Item)
-def update_item(item_id: int, item: schemas.ItemUpdate, db: Session = Depends(get_db)):
+def update_item(item_id: uuid.UUID, item: schemas.ItemUpdate, db: db_dependency):
+    db_item = crud.update_item(db, item_id, item)
+    if not db_item:
+        raise HTTPException(status_code=404, detail="Item not found")
+    return db_item
+
+@app.delete("/items/{item_id}", response_model=schemas.Item)
+def delete_item(item_id: uuid.UUID, db: db_dependency):
     db_item = db.query(models.Item).filter(models.Item.id == item_id).first()
     if not db_item:
         raise HTTPException(status_code=404, detail="Item not found")
-
-    for key, value in item.dict(exclude_unset=True).items():
-        setattr(db_item, key, value)
-
+    db.delete(db_item)
     db.commit()
-    db.refresh(db_item)
-
-    # ---- Stock monitoring ----
-    existing_alert = db.query(models.Alert).filter(models.Alert.item_id == db_item.id).first()
-
-    if db_item.quantity <= db_item.lowStockThreshold:
-        if not existing_alert:
-            db_alert = models.Alert(
-                type="warning",
-                title="Low Stock",
-                message=f"{db_item.itemName} is low on stock (only {db_item.quantity} {db_item.unit})",
-                item_id=db_item.id,
-            )
-            db.add(db_alert)
-            db.commit()
-            db.refresh(db_alert)
-    else:
-        if existing_alert:
-            db.delete(existing_alert)
-            db.commit()
-
     return db_item
 
 # -------------------------
 # SUPPLIERS ENDPOINTS
 # -------------------------
 
-@app.get("/suppliers/", response_model=List[Supplier])
-async def list_suppliers(db: Annotated[Session, Depends(get_db)]):
-    # Query all suppliers from the database
-    db_suppliers = db.query(models.Supplier).all()
-    return db_suppliers
+@app.get("/suppliers/", response_model=List[schemas.Supplier])
+async def list_suppliers(db: db_dependency):
+    return db.query(models.Supplier).all()
 
-@app.post("/suppliers/", response_model=Supplier)
-async def add_supplier(supplier: Supplier, db: Annotated[Session, Depends(get_db)]):
-    db_supplier = models.Supplier(
-        supplierName=supplier.supplierName,
-        contactPerson=supplier.contactPerson,
-        email=supplier.email,
-        phoneNumber=supplier.phoneNumber,
-        address=supplier.address,
-        itemsProvided=supplier.itemsProvided,
-        rating=supplier.rating,
-        status=supplier.status,  # match your model
-    )
-    db.add(db_supplier)
+@app.post("/suppliers/", response_model=schemas.Supplier)
+async def add_supplier(supplier: schemas.SupplierCreate, db: db_dependency):
+    return crud.create_supplier(db, supplier)
+
+@app.put("/suppliers/{supplier_id}", response_model=schemas.Supplier)
+def update_supplier(supplier_id: uuid.UUID, supplier: schemas.SupplierUpdate, db: db_dependency):
+    db_supplier = db.query(models.Supplier).filter(models.Supplier.id == supplier_id).first()
+    if not db_supplier:
+        raise HTTPException(status_code=404, detail="Supplier not found")
+    
+    for key, value in supplier.dict(exclude_unset=True).items():
+        setattr(db_supplier, key, value)
+    
     db.commit()
-    db.refresh(db_supplier)  # make sure id is populated
+    db.refresh(db_supplier)
+    return db_supplier
+
+@app.delete("/suppliers/{supplier_id}", response_model=schemas.Supplier)
+def delete_supplier(supplier_id: uuid.UUID, db: db_dependency):
+    db_supplier = db.query(models.Supplier).filter(models.Supplier.id == supplier_id).first()
+    if not db_supplier:
+        raise HTTPException(status_code=404, detail="Supplier not found")
+    db.delete(db_supplier)
+    db.commit()
     return db_supplier
 
 # -------------------------
 # TRANSACTIONS ENDPOINTS
 # -------------------------
 
-@app.get("/transactions/", response_model=List[Transaction])
-async def list_transactions(db: Annotated[Session, Depends(get_db)]):
-    # Query all items from the database
-    db_transactions = db.query(models.Transaction).all()
-    return db_transactions
+@app.get("/transactions/", response_model=List[schemas.Transaction])
+async def list_transactions(db: db_dependency):
+    return db.query(models.Transaction).all()
 
-@app.post("/transactions/", response_model=Transaction)
-async def add_transaction(transaction: Transaction, db: Annotated[Session, Depends(get_db)]):
-    db_transaction = models.Transaction(
-        date=transaction.date,
-        description=transaction.description,
-        amount=transaction.amount,
-        type=transaction.type,
-        category=transaction.category,
-        status=transaction.status,
-    )
-    db.add(db_transaction)
-    db.commit()
-    db.refresh(db_transaction)  # make sure id is populated
-    return db_transaction
+@app.post("/transactions/", response_model=schemas.Transaction)
+async def add_transaction(transaction: schemas.TransactionCreate, db: db_dependency):
+    return crud.create_transaction(db, transaction)
 
-@app.delete("/transactions/{transaction_id}", response_model=Transaction)
-def delete_transaction(transaction_id: int, db: Session = Depends(get_db)):
+@app.delete("/transactions/{transaction_id}", response_model=schemas.Transaction)
+def delete_transaction(transaction_id: uuid.UUID, db: db_dependency):
     db_transaction = db.query(models.Transaction).filter(models.Transaction.id == transaction_id).first()
     if not db_transaction:
         raise HTTPException(status_code=404, detail="Transaction not found")
@@ -230,73 +135,57 @@ def delete_transaction(transaction_id: int, db: Session = Depends(get_db)):
 # ALERTS ENDPOINTS
 # -------------------------
 
-@app.get("/alerts/", response_model=List[Alert])
-async def list_alerts(db: Annotated[Session, Depends(get_db)]):
-    # Query all items from the database
-    db_alerts = db.query(models.Alert).all()
-    return db_alerts
+@app.get("/alerts/", response_model=List[schemas.Alert])
+async def list_alerts(db: db_dependency):
+    return db.query(models.Alert).all()
 
-@app.post("/alerts/", response_model=Alert)
-async def add_alerts(alert: Alert, db: Annotated[Session, Depends(get_db)]):
-    db_alert = models.Alert(
-        type=alert.type,
-        title=alert.title,
-        message=alert.message,
-    )
-    db.add(db_alert)
+@app.post("/alerts/", response_model=schemas.Alert)
+async def add_alerts(alert: schemas.AlertCreate, db: db_dependency):
+    return crud.create_alert(db, alert.type, alert.title, alert.message, alert.item_id)
+
+@app.delete("/alerts/{alert_id}", response_model=schemas.Alert)
+def delete_alert(alert_id: uuid.UUID, db: db_dependency):
+    db_alert = db.query(models.Alert).filter(models.Alert.id == alert_id).first()
+    if not db_alert:
+        raise HTTPException(status_code=404, detail="Alert not found")
+    db.delete(db_alert)
     db.commit()
-    db.refresh(db_alert)  # make sure id is populated
     return db_alert
 
 # -------------------------
 # EVENTS ENDPOINTS
 # -------------------------
 
-@app.get("/events/", response_model=List[Event])
-async def list_events(db: Annotated[Session, Depends(get_db)]):
-    # Query all items from the database
-    db_events = db.query(models.Event).all()
-    return db_events
+@app.get("/events/", response_model=List[schemas.Event])
+async def list_events(db: db_dependency):
+    return db.query(models.Event).all()
 
-@app.post("/events/", response_model=Event)
-async def add_events(event: Event, db: Annotated[Session, Depends(get_db)]):
-    db_event = models.Event(
-        title=event.title,
-        description=event.description,
-        date=event.date,
-    )
-    db.add(db_event)
+@app.post("/events/", response_model=schemas.Event)
+async def add_events(event: schemas.EventCreate, db: db_dependency):
+    return crud.create_event(db, event)
+
+@app.delete("/events/{event_id}", response_model=schemas.Event)
+def delete_event(event_id: uuid.UUID, db: db_dependency):
+    db_event = db.query(models.Event).filter(models.Event.id == event_id).first()
+    if not db_event:
+        raise HTTPException(status_code=404, detail="Event not found")
+    db.delete(db_event)
     db.commit()
-    db.refresh(db_event)  # make sure id is populated
     return db_event
 
 # -------------------------
 # FORECAST PREDICTION
 # -------------------------
 
-# Request model
-class ForecastRequest(BaseModel):
-    product: str
-    currentStock: int
-    salesData: str  # comma-separated numbers
-
-# Response model
-class ForecastResponse(BaseModel):
-    product: str
-    forecast: List[float]
-
 @app.post("/api/forecast", response_model=ForecastResponse)
 def forecast_demand(request: ForecastRequest):
-    # Convert salesData CSV string to list of numbers
     sales_list = [float(x.strip()) for x in request.salesData.split(",") if x.strip()]
     if len(sales_list) < 2:
-        return {"product": request.product, "forecast": [0]}  # Not enough data
+        return {"product": request.product, "forecast": [0]}
     
-    # Fit ARIMA model (p=1, d=1, q=1 is a simple starting point)
     try:
         model = ARIMA(sales_list, order=(1, 1, 1))
         model_fit = model.fit()
-        # Forecast next 6 periods
         forecast = model_fit.forecast(steps=6)
         forecast_list = forecast.tolist()
     except Exception as e:

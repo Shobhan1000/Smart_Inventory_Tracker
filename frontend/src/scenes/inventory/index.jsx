@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Box, Typography, useTheme, Button, Dialog, DialogTitle, DialogContent, DialogActions, TextField } from "@mui/material";
+import { Box, Typography, useTheme, Button, Dialog, DialogTitle, DialogContent, DialogActions, TextField, MenuItem } from "@mui/material";
 import { DataGrid } from "@mui/x-data-grid";
 import { tokens } from "../../theme";
 import Header from "../../components/Header";
@@ -9,36 +9,43 @@ const Inventory = () => {
   const colors = tokens(theme.palette.mode);
 
   const [items, setItems] = useState([]);
+  const [suppliers, setSuppliers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selectionModel, setSelectionModel] = useState([]);
-  const [actionType, setActionType] = useState(null); // 'edit' or 'delete'
-  const [pendingAction, setPendingAction] = useState(false);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [itemsToDelete, setItemsToDelete] = useState([]);
 
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [editItem, setEditItem] = useState(null);
   const [newItem, setNewItem] = useState({
     itemName: "",
     category: "",
     quantity: 0,
     unit: "",
-    supplier: "",
+    supplier_id: "",
     lastRestocked: "",
     expiryDate: "",
     lowStockThreshold: 5,
   });
 
-  const handleOpen = () => setIsModalOpen(true);
-  const handleClose = () => {
-    setIsModalOpen(false);
+  const handleOpen = () => {
+    setIsModalOpen(true);
+    setEditItem(null);
     setNewItem({
       itemName: "",
       category: "",
       quantity: 0,
       unit: "",
-      supplier: "",
+      supplier_id: "",
       lastRestocked: "",
       expiryDate: "",
       lowStockThreshold: 5,
     });
+  };
+
+  const handleClose = () => {
+    setIsModalOpen(false);
+    setEditItem(null);
   };
 
   const handleInputChange = (e) => {
@@ -55,160 +62,196 @@ const Inventory = () => {
         lowStockThreshold: Number(newItem.lowStockThreshold),
         lastRestocked: newItem.lastRestocked || null,
         expiryDate: newItem.expiryDate || null,
+        supplier_id: newItem.supplier_id || null,
       };
 
-      const response = await fetch("http://localhost:8000/items/", {
-        method: "POST",
+      const url = editItem 
+        ? `http://localhost:8000/items/${editItem.id}`
+        : "http://localhost:8000/items/";
+      
+      const method = editItem ? "PUT" : "POST";
+
+      const response = await fetch(url, {
+        method: method,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
 
       if (!response.ok) {
         const errorData = await response.json();
-        console.error("Failed to add item:", errorData);
+        console.error("Failed to save item:", errorData);
         return;
       }
 
       const savedItem = await response.json();
-
-      // Add to local state
-      const itemWithId = { id: savedItem.id || items.length + 1, ...savedItem };
-      setItems((prev) => [...prev, itemWithId]);
+      
+      if (editItem) {
+        setItems(prev => prev.map(item => item.id === editItem.id ? savedItem : item));
+      } else {
+        setItems(prev => [...prev, savedItem]);
+      }
+      
       handleClose();
     } catch (err) {
-      console.error("Error adding item:", err);
+      console.error("Error saving item:", err);
     }
   };
 
-  // Fetch inventory items from backend
+  // Fetch inventory items and suppliers from backend
   useEffect(() => {
-    fetch("http://localhost:8000/items/")
-      .then(res => res.json())
-      .then((data) => {
-        if (!Array.isArray(data)) {
-          console.error("Expected array from /items/, got:", data);
-          setItems([]);
-          setLoading(false);
-          return;
-        }
+    const fetchData = async () => {
+      try {
+        setLoading(true);
+        const [itemsRes, suppliersRes] = await Promise.all([
+          fetch("http://localhost:8000/items/"),
+          fetch("http://localhost:8000/suppliers/")
+        ]);
 
-        const itemsWithIds = data.map((item, index) => ({
-          id: item.id || index + 1,
-          itemName: item.itemName || "Unknown Item",
-          category: item.category || "Uncategorized",
-          quantity: item.quantity || 0,
-          unit: item.unit || "pcs",
-          supplier: item.supplier || "Unknown Supplier",
-          lastRestocked: item.lastRestocked || null,
-          expiryDate: item.expiryDate || null,
-          lowStockThreshold: item.lowStockThreshold || 5,
-        }));
+        if (!itemsRes.ok) throw new Error("Failed to fetch items");
+        if (!suppliersRes.ok) throw new Error("Failed to fetch suppliers");
 
-        setItems(itemsWithIds);
-        setLoading(false);
-      })
-      .catch(err => {
+        const itemsData = await itemsRes.json();
+        const suppliersData = await suppliersRes.json();
+
+        setItems(itemsData);
+        setSuppliers(suppliersData);
+      } catch (err) {
         console.error("Fetch error:", err);
         setItems([]);
+        setSuppliers([]);
+      } finally {
         setLoading(false);
-      });
+      }
+    };
+
+    fetchData();
   }, []);
 
-  // Safe value getter for dates
-  const safeDateGetter = (params) => {
-    if (!params || !params.row) return "";
-    const dateValue = params.row[params.field];
-    return dateValue ? new Date(dateValue).toLocaleDateString() : "";
+  // Get supplier name from ID
+  const getSupplierName = (supplierId) => {
+    if (!supplierId) return "No Supplier";
+    const supplier = suppliers.find(s => s.id === supplierId);
+    return supplier ? supplier.supplierName : "Supplier Not Found";
+  };
+
+  // Format date for display
+  const formatDate = (dateString) => {
+    if (!dateString) return "Not Set";
+    try {
+      return new Date(dateString).toLocaleDateString();
+    } catch {
+      return "Invalid Date";
+    }
   };
 
   // Handle edit action
   const handleEdit = () => {
-    if (selectionModel.length === 0) {
-      setActionType("edit");
-      setPendingAction(true);
-      return;
+    if (selectionModel.length === 1) {
+      const itemToEdit = items.find(item => item.id === selectionModel[0]);
+      if (itemToEdit) {
+        setEditItem(itemToEdit);
+        setNewItem({
+          itemName: itemToEdit.itemName || "",
+          category: itemToEdit.category || "",
+          quantity: itemToEdit.quantity || 0,
+          unit: itemToEdit.unit || "",
+          supplier_id: itemToEdit.supplier_id || "",
+          lastRestocked: itemToEdit.lastRestocked || "",
+          expiryDate: itemToEdit.expiryDate || "",
+          lowStockThreshold: itemToEdit.lowStockThreshold || 5,
+        });
+        setIsModalOpen(true);
+      }
     }
-    setPendingAction(true);
-    setActionType("edit");
   };
 
   // Handle delete action
   const handleDelete = () => {
-    if (selectionModel.length === 0) {
-      setActionType("delete");
-      setPendingAction(true);
-      return;
+    if (selectionModel.length > 0) {
+      setItemsToDelete(selectionModel);
+      setDeleteConfirmOpen(true);
     }
-    setPendingAction(true);
-    setActionType("delete");
   };
 
-  // Confirm the action
-  const handleConfirm = async () => {
-    if (selectionModel.length === 0) {
-      setPendingAction(false);
-      setActionType(null);
-      return;
-    }
-
-    if (actionType === "delete") {
-      // Call backend DELETE
-      await Promise.all(
-        selectionModel.map(id =>
-          fetch(`http://localhost:8000/items/${id}`, { method: "DELETE" })
-        )
-      );
-      setItems(prev => prev.filter(item => !selectionModel.includes(item.id)));
-    } else if (actionType === "edit") {
-      // Example: open an edit dialog for selected item(s)
-      // After saving changes, call PUT
-      const id = selectionModel[0];
-      const updatedData = { quantity: 20 }; // Example payload
-      const res = await fetch(`http://localhost:8000/items/${id}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(updatedData),
-      });
-      if (res.ok) {
-        const updatedItem = await res.json();
-        setItems(prev => prev.map(item => (item.id === id ? updatedItem : item)));
+  // Confirm delete action
+  const handleConfirmDelete = async () => {
+    try {
+      // Delete each selected item
+      for (const id of itemsToDelete) {
+        const response = await fetch(`http://localhost:8000/items/${id}`, {
+          method: "DELETE",
+        });
+        
+        if (!response.ok) {
+          console.error(`Failed to delete item ${id}`);
+        }
       }
+      
+      // Update local state
+      setItems(prev => prev.filter(item => !itemsToDelete.includes(item.id)));
+      setSelectionModel([]);
+    } catch (err) {
+      console.error("Error deleting items:", err);
+    } finally {
+      setDeleteConfirmOpen(false);
+      setItemsToDelete([]);
     }
-
-    setPendingAction(false);
-    setActionType(null);
-    setSelectionModel([]);
   };
 
-  const handleCancel = () => {
-    setPendingAction(false);
-    setActionType(null);
-    if (pendingAction) {
-      setSelectionModel([]);
-    }
+  const handleCancelDelete = () => {
+    setDeleteConfirmOpen(false);
+    setItemsToDelete([]);
   };
 
   const columns = [
-    { field: "id", headerName: "ID", width: 70 },
+    { 
+      field: "id", 
+      headerName: "ID", 
+      width: 100, 
+      renderCell: (params) => (
+        <Typography variant="body2" sx={{ fontSize: '0.7rem', color: colors.grey[400] }}>
+          {params.value.substring(0, 6)}...
+        </Typography>
+      )
+    },
     { field: "itemName", headerName: "Item Name", flex: 1, cellClassName: "name-column--cell" },
-    { field: "category", headerName: "Category", width: 130 },
-    { field: "quantity", headerName: "Quantity", width: 100, type: "number" },
-    { field: "unit", headerName: "Unit", width: 80 },
-    { field: "supplier", headerName: "Supplier", flex: 1 },
-    { field: "lastRestocked", headerName: "Last Restocked", width: 130, valueGetter: safeDateGetter },
-    { field: "expiryDate", headerName: "Expiry Date", width: 130, valueGetter: safeDateGetter },
-    { field: "lowStockThreshold", headerName: "Low Stock Threshold", width: 150, type: "number" },
+    { field: "category", headerName: "Category", width: 120 },
+    { field: "quantity", headerName: "Qty", width: 80, type: "number" },
+    { field: "unit", headerName: "Unit", width: 60 },
+    { 
+      field: "supplier_id", 
+      headerName: "Supplier", 
+      flex: 1,
+      valueGetter: (params) => getSupplierName(params.value),
+    },
+    { 
+      field: "lastRestocked", 
+      headerName: "Last Restocked", 
+      width: 120, 
+      valueGetter: (params) => formatDate(params.value)
+    },
+    { 
+      field: "expiryDate", 
+      headerName: "Expiry Date", 
+      width: 120, 
+      valueGetter: (params) => formatDate(params.value)
+    },
+    { field: "lowStockThreshold", headerName: "Low Stock Level", width: 110, type: "number" },
     {
       field: "status",
       headerName: "Status",
-      width: 120,
+      width: 100,
       renderCell: (params) => {
         if (!params || !params.row) return <Typography color={colors.grey[500]}>N/A</Typography>;
         const quantity = params.row.quantity || 0;
         const threshold = params.row.lowStockThreshold || 5;
         return (
-          <Typography color={quantity <= threshold ? colors.redAccent[500] : colors.greenAccent[500]}>
-            {quantity <= threshold ? "Low Stock" : "OK"}
+          <Typography 
+            color={quantity <= threshold ? colors.redAccent[500] : colors.greenAccent[500]}
+            fontWeight="bold"
+            fontSize="0.8rem"
+          >
+            {quantity <= threshold ? "LOW" : "OK"}
           </Typography>
         );
       },
@@ -221,7 +264,7 @@ const Inventory = () => {
 
       {/* Action Buttons */}
       <Box mb="10px" display="flex" gap={2} alignItems="center" flexWrap="wrap">
-        <Button variant="contained" color="primary" onClick={handleOpen} disabled={pendingAction}>
+        <Button variant="contained" color="primary" onClick={handleOpen}>
           Add New Item
         </Button>
 
@@ -229,48 +272,26 @@ const Inventory = () => {
           variant="contained"
           color="secondary"
           onClick={handleEdit}
-          disabled={pendingAction && actionType !== "edit"}
-          sx={{ backgroundColor: pendingAction && actionType === "edit" ? colors.greenAccent[600] : undefined }}
+          disabled={selectionModel.length !== 1}
         >
-          {pendingAction && actionType === "edit" ? "Select Rows to Edit" : "Edit"}
+          Edit Selected
         </Button>
 
         <Button
           variant="contained"
           color="error"
           onClick={handleDelete}
-          disabled={pendingAction && actionType !== "delete"}
-          sx={{ backgroundColor: pendingAction && actionType === "delete" ? colors.redAccent[600] : undefined }}
+          disabled={selectionModel.length === 0}
         >
-          {pendingAction && actionType === "delete" ? "Select Rows to Delete" : "Delete"}
+          Delete Selected
         </Button>
-
-        {pendingAction && (
-          <>
-            <Button variant="contained" color="success" onClick={handleConfirm} disabled={selectionModel.length === 0}>
-              Confirm {actionType === "edit" ? "Edit" : "Delete"}
-            </Button>
-            <Button variant="outlined" color="warning" onClick={handleCancel}>
-              Cancel
-            </Button>
-          </>
-        )}
       </Box>
 
-      {/* Action Status */}
-      {pendingAction && (
+      {selectionModel.length > 0 && (
         <Box mb="10px" p="10px" bgcolor={colors.primary[400]} borderRadius="8px">
-          <Typography color={actionType === "edit" ? colors.greenAccent[500] : colors.redAccent[500]}>
-            {selectionModel.length > 0
-              ? `Ready to ${actionType} ${selectionModel.length} row${selectionModel.length > 1 ? "s" : ""} - Please confirm or cancel`
-              : `Please select row(s) to ${actionType} then confirm`}
+          <Typography>
+            {selectionModel.length} row{selectionModel.length > 1 ? "s" : ""} selected
           </Typography>
-        </Box>
-      )}
-
-      {!pendingAction && selectionModel.length > 0 && (
-        <Box mb="10px" p="10px" bgcolor={colors.primary[400]} borderRadius="8px">
-          <Typography>{selectionModel.length} row{selectionModel.length > 1 ? "s" : ""} selected</Typography>
         </Box>
       )}
 
@@ -301,9 +322,9 @@ const Inventory = () => {
         />
       </Box>
 
-      {/* Add Item Modal */}
-      <Dialog open={isModalOpen} onClose={handleClose}>
-        <DialogTitle>Add New Item</DialogTitle>
+      {/* Add/Edit Item Modal */}
+      <Dialog open={isModalOpen} onClose={handleClose} maxWidth="sm" fullWidth>
+        <DialogTitle>{editItem ? "Edit Item" : "Add New Item"}</DialogTitle>
         <DialogContent sx={{ display: "flex", flexDirection: "column", gap: 2, mt: 1 }}>
           <TextField
             label="Item Name"
@@ -312,6 +333,7 @@ const Inventory = () => {
             name="itemName"
             value={newItem.itemName}
             onChange={handleInputChange}
+            required
           />
           <TextField
             label="Category"
@@ -320,6 +342,7 @@ const Inventory = () => {
             name="category"
             value={newItem.category}
             onChange={handleInputChange}
+            required
           />
           <TextField
             label="Quantity"
@@ -329,6 +352,7 @@ const Inventory = () => {
             name="quantity"
             value={newItem.quantity}
             onChange={handleInputChange}
+            required
           />
           <TextField
             label="Unit"
@@ -337,15 +361,24 @@ const Inventory = () => {
             name="unit"
             value={newItem.unit}
             onChange={handleInputChange}
+            required
           />
           <TextField
+            select
             label="Supplier"
             variant="outlined"
             fullWidth
-            name="supplier"
-            value={newItem.supplier}
+            name="supplier_id"
+            value={newItem.supplier_id}
             onChange={handleInputChange}
-          />
+          >
+            <MenuItem value="">No Supplier</MenuItem>
+            {suppliers.map((supplier) => (
+              <MenuItem key={supplier.id} value={supplier.id}>
+                {supplier.supplierName}
+              </MenuItem>
+            ))}
+          </TextField>
           <TextField
             label="Last Restocked"
             type="date"
@@ -374,6 +407,7 @@ const Inventory = () => {
             name="lowStockThreshold"
             value={newItem.lowStockThreshold}
             onChange={handleInputChange}
+            required
           />
         </DialogContent>
         <DialogActions>
@@ -381,7 +415,26 @@ const Inventory = () => {
             Cancel
           </Button>
           <Button onClick={handleSubmit} color="primary" variant="contained">
-            Submit
+            {editItem ? "Update" : "Submit"}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog open={deleteConfirmOpen} onClose={handleCancelDelete}>
+        <DialogTitle>Confirm Delete</DialogTitle>
+        <DialogContent>
+          <Typography>
+            Are you sure you want to delete {itemsToDelete.length} item{itemsToDelete.length > 1 ? 's' : ''}?
+            This action cannot be undone.
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleCancelDelete} color="primary" variant="outlined">
+            Cancel
+          </Button>
+          <Button onClick={handleConfirmDelete} color="error" variant="contained">
+            Delete
           </Button>
         </DialogActions>
       </Dialog>

@@ -9,6 +9,7 @@ import {
   DialogContent,
   DialogActions,
   TextField,
+  MenuItem,
 } from "@mui/material";
 import { DataGrid } from "@mui/x-data-grid";
 import { tokens } from "../../theme";
@@ -21,10 +22,11 @@ const Suppliers = () => {
   const [suppliers, setSuppliers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selectionModel, setSelectionModel] = useState([]);
-  const [actionType, setActionType] = useState(null); // 'edit' or 'delete'
-  const [pendingAction, setPendingAction] = useState(false);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [suppliersToDelete, setSuppliersToDelete] = useState([]);
 
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [editSupplier, setEditSupplier] = useState(null);
   const [newSupplier, setNewSupplier] = useState({
     supplierName: "",
     contactPerson: "",
@@ -32,12 +34,12 @@ const Suppliers = () => {
     phoneNumber: "",
     address: "",
     itemsProvided: "",
-    rating: 0,
+    status: "Active",
   });
 
-  const handleOpen = () => setIsModalOpen(true);
-  const handleClose = () => {
-    setIsModalOpen(false);
+  const handleOpen = () => {
+    setIsModalOpen(true);
+    setEditSupplier(null);
     setNewSupplier({
       supplierName: "",
       contactPerson: "",
@@ -45,8 +47,13 @@ const Suppliers = () => {
       phoneNumber: "",
       address: "",
       itemsProvided: "",
-      rating: 0,
+      status: "Active",
     });
+  };
+
+  const handleClose = () => {
+    setIsModalOpen(false);
+    setEditSupplier(null);
   };
 
   const handleInputChange = (e) => {
@@ -56,98 +63,138 @@ const Suppliers = () => {
 
   const handleSubmit = async () => {
     try {
-      // Correct payload with proper types
+      // Prepare payload with correct types
       const payload = {
         ...newSupplier,
         phoneNumber: newSupplier.phoneNumber || null,
-        rating: Number(newSupplier.rating),
       };
 
-      const response = await fetch("http://localhost:8000/suppliers/", {
-        method: "POST",
+      const url = editSupplier 
+        ? `http://localhost:8000/suppliers/${editSupplier.id}`
+        : "http://localhost:8000/suppliers/";
+      
+      const method = editSupplier ? "PUT" : "POST";
+
+      const response = await fetch(url, {
+        method: method,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
 
       if (!response.ok) {
         const errorData = await response.json();
-        console.error("Failed to add supplier:", errorData);
+        console.error("Failed to save supplier:", errorData);
         return;
       }
 
       const savedSupplier = await response.json();
-
-      // Add to local state
-      const supplierWithId = {
-        id: savedSupplier.id || suppliers.length + 1,
-        ...savedSupplier,
-      };
-      setSuppliers((prev) => [...prev, supplierWithId]);
+      
+      if (editSupplier) {
+        setSuppliers(prev => prev.map(supplier => supplier.id === editSupplier.id ? savedSupplier : supplier));
+      } else {
+        setSuppliers(prev => [...prev, savedSupplier]);
+      }
+      
       handleClose();
     } catch (err) {
-      console.error("Error adding supplier:", err);
+      console.error("Error saving supplier:", err);
     }
   };
 
   // Fetch suppliers from backend
   useEffect(() => {
-    fetch("http://localhost:8000/suppliers/")
-      .then((res) => res.json())
-      .then((data) => {
-        const suppliersWithIds = data.map((supplier, index) => ({
-          id: supplier.id || index + 1,
-          supplierName: supplier.supplierName || "Unknown Supplier",
-          contactPerson: supplier.contactPerson || "Not specified",
-          email: supplier.email || "No email",
-          phoneNumber: supplier.phoneNumber || "No phone",
-          address: supplier.address || "Address not provided",
-          itemsProvided: supplier.itemsProvided || "Various items",
-          rating: supplier.rating || 0,
-          status: supplier.status || "Active",
-        }));
-        setSuppliers(suppliersWithIds);
-        setLoading(false);
-      })
-      .catch((err) => {
+    const fetchSuppliers = async () => {
+      try {
+        setLoading(true);
+        const response = await fetch("http://localhost:8000/suppliers/");
+        
+        if (!response.ok) {
+          throw new Error("Failed to fetch suppliers");
+        }
+
+        const data = await response.json();
+        setSuppliers(data);
+      } catch (err) {
         console.error("Fetch error:", err);
-        setLoading(false);
         setSuppliers([]);
-      });
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchSuppliers();
   }, []);
 
-  // Action handlers
+  // Handle edit action
   const handleEdit = () => {
-    setActionType("edit");
-    setPendingAction(true);
-  };
-
-  const handleDelete = () => {
-    setActionType("delete");
-    setPendingAction(true);
-  };
-
-  const handleConfirm = () => {
-    if (actionType === "delete") {
-      setSuppliers((prev) =>
-        prev.filter((s) => !selectionModel.includes(s.id))
-      );
+    if (selectionModel.length === 1) {
+      const supplierToEdit = suppliers.find(supplier => supplier.id === selectionModel[0]);
+      if (supplierToEdit) {
+        setEditSupplier(supplierToEdit);
+        setNewSupplier({
+          supplierName: supplierToEdit.supplierName || "",
+          contactPerson: supplierToEdit.contactPerson || "",
+          email: supplierToEdit.email || "",
+          phoneNumber: supplierToEdit.phoneNumber || "",
+          address: supplierToEdit.address || "",
+          itemsProvided: supplierToEdit.itemsProvided || "",
+          status: supplierToEdit.status || "Active",
+        });
+        setIsModalOpen(true);
+      }
     }
-    console.log(`${actionType} confirmed for`, selectionModel);
-
-    setPendingAction(false);
-    setActionType(null);
-    setSelectionModel([]);
   };
 
-  const handleCancel = () => {
-    setPendingAction(false);
-    setActionType(null);
-    setSelectionModel([]);
+  // Handle delete action
+  const handleDelete = () => {
+    if (selectionModel.length > 0) {
+      setSuppliersToDelete(selectionModel);
+      setDeleteConfirmOpen(true);
+    }
+  };
+
+  // Confirm delete action
+  const handleConfirmDelete = async () => {
+    try {
+      // Delete each selected supplier
+      for (const id of suppliersToDelete) {
+        const response = await fetch(`http://localhost:8000/suppliers/${id}`, {
+          method: "DELETE",
+        });
+        
+        if (!response.ok) {
+          console.error(`Failed to delete supplier ${id}`);
+        }
+      }
+      
+      // Update local state
+      setSuppliers(prev => prev.filter(supplier => !suppliersToDelete.includes(supplier.id)));
+      setSelectionModel([]);
+    } catch (err) {
+      console.error("Error deleting suppliers:", err);
+    } finally {
+      setDeleteConfirmOpen(false);
+      setSuppliersToDelete([]);
+    }
+  };
+
+  const handleCancelDelete = () => {
+    setDeleteConfirmOpen(false);
+    setSuppliersToDelete([]);
   };
 
   // Define columns for DataGrid
   const columns = [
-    { field: "id", headerName: "ID", width: 70 },
+    { 
+      field: "id", 
+      headerName: "ID", 
+      width: 100, 
+      renderCell: (params) => (
+        <Typography variant="body2" sx={{ fontSize: '0.7rem', color: colors.grey[400] }}>
+          {params.value.substring(0, 6)}...
+        </Typography>
+      )
+    },
     {
       field: "supplierName",
       headerName: "Supplier Name",
@@ -160,39 +207,13 @@ const Suppliers = () => {
     { field: "address", headerName: "Address", flex: 1 },
     { field: "itemsProvided", headerName: "Items Provided", width: 150 },
     {
-      field: "rating",
-      headerName: "Rating",
-      width: 100,
-      renderCell: (params) => {
-        const rating = params.value || 0;
-        return (
-          <Box
-            sx={{
-              backgroundColor:
-                rating >= 4
-                  ? colors.greenAccent[600]
-                  : rating >= 3
-                  ? colors.blueAccent[500]
-                  : colors.redAccent[600],
-              color: "white",
-              padding: "4px 8px",
-              borderRadius: "4px",
-              fontWeight: "bold",
-            }}
-          >
-            {rating}/5
-          </Box>
-        );
-      },
-    },
-    {
       field: "status",
       headerName: "Status",
       width: 120,
       renderCell: (params) => {
         const status = params.value || "Active";
         const color =
-          status === "Active"
+          status === "active"
             ? colors.greenAccent[500]
             : status === "Pending"
             ? colors.blueAccent[500]
@@ -217,7 +238,6 @@ const Suppliers = () => {
           variant="contained"
           color="primary"
           onClick={handleOpen}
-          disabled={pendingAction}
         >
           Add New Supplier
         </Button>
@@ -226,68 +246,25 @@ const Suppliers = () => {
           variant="contained"
           color="secondary"
           onClick={handleEdit}
-          disabled={pendingAction && actionType !== "edit"}
-          sx={{
-            backgroundColor:
-              pendingAction && actionType === "edit"
-                ? colors.greenAccent[600]
-                : undefined,
-          }}
+          disabled={selectionModel.length !== 1}
         >
-          {pendingAction && actionType === "edit"
-            ? "Select Rows to Edit"
-            : "Edit"}
+          Edit Selected
         </Button>
 
         <Button
           variant="contained"
           color="error"
           onClick={handleDelete}
-          disabled={pendingAction && actionType !== "delete"}
-          sx={{
-            backgroundColor:
-              pendingAction && actionType === "delete"
-                ? colors.redAccent[600]
-                : undefined,
-          }}
+          disabled={selectionModel.length === 0}
         >
-          {pendingAction && actionType === "delete"
-            ? "Select Rows to Delete"
-            : "Delete"}
+          Delete Selected
         </Button>
-
-        {pendingAction && (
-          <>
-            <Button
-              variant="contained"
-              color="success"
-              onClick={handleConfirm}
-              disabled={selectionModel.length === 0}
-            >
-              Confirm {actionType === "edit" ? "Edit" : "Delete"}
-            </Button>
-            <Button variant="outlined" color="warning" onClick={handleCancel}>
-              Cancel
-            </Button>
-          </>
-        )}
       </Box>
 
-      {/* Info Bar */}
-      {pendingAction && (
+      {selectionModel.length > 0 && (
         <Box mb="10px" p="10px" bgcolor={colors.primary[400]} borderRadius="8px">
-          <Typography
-            color={
-              actionType === "edit"
-                ? colors.greenAccent[500]
-                : colors.redAccent[500]
-            }
-          >
-            {selectionModel.length > 0
-              ? `Ready to ${actionType} ${selectionModel.length} row${
-                  selectionModel.length > 1 ? "s" : ""
-                } - Please confirm or cancel`
-              : `Please select row(s) to ${actionType} then confirm`}
+          <Typography>
+            {selectionModel.length} row{selectionModel.length > 1 ? "s" : ""} selected
           </Typography>
         </Box>
       )}
@@ -333,9 +310,9 @@ const Suppliers = () => {
         />
       </Box>
 
-      {/* Add Supplier Modal */}
-      <Dialog open={isModalOpen} onClose={handleClose}>
-        <DialogTitle>Add New Supplier</DialogTitle>
+      {/* Add/Edit Supplier Modal */}
+      <Dialog open={isModalOpen} onClose={handleClose} maxWidth="sm" fullWidth>
+        <DialogTitle>{editSupplier ? "Edit Supplier" : "Add New Supplier"}</DialogTitle>
         <DialogContent
           sx={{ display: "flex", flexDirection: "column", gap: 2, mt: 1 }}
         >
@@ -345,6 +322,7 @@ const Suppliers = () => {
             value={newSupplier.supplierName}
             onChange={handleInputChange}
             fullWidth
+            required
           />
           <TextField
             label="Contact Person"
@@ -356,6 +334,7 @@ const Suppliers = () => {
           <TextField
             label="Email"
             name="email"
+            type="email"
             value={newSupplier.email}
             onChange={handleInputChange}
             fullWidth
@@ -373,6 +352,8 @@ const Suppliers = () => {
             value={newSupplier.address}
             onChange={handleInputChange}
             fullWidth
+            multiline
+            rows={2}
           />
           <TextField
             label="Items Provided"
@@ -380,22 +361,47 @@ const Suppliers = () => {
             value={newSupplier.itemsProvided}
             onChange={handleInputChange}
             fullWidth
+            multiline
+            rows={2}
           />
           <TextField
-            label="Rating"
-            type="number"
-            name="rating"
-            value={newSupplier.rating}
+            select
+            label="Status"
+            name="status"
+            value={newSupplier.status}
             onChange={handleInputChange}
             fullWidth
-          />
+          >
+            <MenuItem value="Active">Active</MenuItem>
+            <MenuItem value="Pending">Pending</MenuItem>
+            <MenuItem value="Inactive">Inactive</MenuItem>
+          </TextField>
         </DialogContent>
         <DialogActions>
           <Button onClick={handleClose} color="warning" variant="outlined">
             Cancel
           </Button>
           <Button onClick={handleSubmit} color="primary" variant="contained">
-            Submit
+            {editSupplier ? "Update" : "Submit"}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog open={deleteConfirmOpen} onClose={handleCancelDelete}>
+        <DialogTitle>Confirm Delete</DialogTitle>
+        <DialogContent>
+          <Typography>
+            Are you sure you want to delete {suppliersToDelete.length} supplier{suppliersToDelete.length > 1 ? 's' : ''}?
+            This action cannot be undone.
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleCancelDelete} color="primary" variant="outlined">
+            Cancel
+          </Button>
+          <Button onClick={handleConfirmDelete} color="error" variant="contained">
+            Delete
           </Button>
         </DialogActions>
       </Dialog>
