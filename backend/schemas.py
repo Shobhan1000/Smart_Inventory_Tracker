@@ -11,7 +11,7 @@ class ItemBase(BaseModel):
     category: str
     quantity: int
     unit: str
-    supplier: str
+    supplier_id: int
     lastRestocked: Optional[date] = None
     expiryDate: Optional[date] = None
     lowStockThreshold: int
@@ -26,7 +26,7 @@ class ItemUpdate(BaseModel):
     category: Optional[str] = None
     quantity: Optional[int] = None
     unit: Optional[str] = None
-    supplier: Optional[str] = None
+    supplier_id: Optional[int] = None
     lastRestocked: Optional[date] = None
     expiryDate: Optional[date] = None
     lowStockThreshold: Optional[int] = None
@@ -82,9 +82,11 @@ class TransactionBase(BaseModel):
     date: date
     description: str
     amount: float
+    quantity: int
     type: str
     category: Optional[str] = None
     status: Optional[str] = None
+    item_id = int
 
 
 class TransactionCreate(TransactionBase):
@@ -95,6 +97,7 @@ class TransactionUpdate(BaseModel):
     date: Optional[date] = None
     description: Optional[str] = None
     amount: Optional[float] = None
+    quantity: Optional[int] = None
     type: Optional[str] = None
     category: Optional[str] = None
     status: Optional[str] = None
