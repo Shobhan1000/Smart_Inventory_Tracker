@@ -8,7 +8,6 @@ import InventoryIcon from "@mui/icons-material/Inventory";
 import WarningIcon from "@mui/icons-material/Warning";
 import AddIcon from "@mui/icons-material/Add";
 import Header from "../../components/Header";
-import LineChart from "../../components/LineChart";
 import BarChart from "../../components/BarChart";
 import StatBox from "../../components/StatBox";
 import { useNavigate } from "react-router-dom";
@@ -123,6 +122,69 @@ const Dashboard = () => {
     percentageDifference = 100;
     trend = "up";
   }
+
+  // Prepare data for charts
+  const prepareStockLevelsData = () => {
+    const sortedItems = [...items].sort((a, b) => b.quantity - a.quantity).slice(0, 10);
+    
+    return {
+      labels: sortedItems.map(item => item.itemName),
+      datasets: [
+        {
+          label: 'Stock Quantity',
+          data: sortedItems.map(item => item.quantity),
+          backgroundColor: sortedItems.map((_, index) => 
+            getColor(`greenAccent.${500 + (index * 100) % 400}`, '#4CAF50')
+          ),
+        },
+      ],
+    };
+  };
+
+  const prepareTopSellingItemsData = () => {
+    const sales = transactions.filter(t => t.type?.toLowerCase() === "sale");
+    
+    // Group sales by item_id and sum quantities
+    const salesByItem = sales.reduce((acc, sale) => {
+      if (sale.item_id) {
+        if (!acc[sale.item_id]) acc[sale.item_id] = 0;
+        acc[sale.item_id] += sale.quantity || 0;
+      }
+      return acc;
+    }, {});
+
+    // Get top 10 items by sales quantity
+    const topItems = Object.entries(salesByItem)
+      .sort(([, a], [, b]) => b - a)
+      .slice(0, 10)
+      .map(([itemId, quantity]) => {
+        // Try different possible ID fields
+        const item = items.find(i => 
+          i.id === itemId || 
+          i.uuid === itemId || 
+          i._id === itemId ||
+          i.itemId === itemId
+        );        
+        return {
+          name: item ? item.itemName : `Item ${itemId.substring(0, 8)}...`,
+          quantity: quantity
+        };
+      });
+
+    return {
+      labels: topItems.map(item => item.name),
+      datasets: [
+        {
+          label: 'Units Sold',
+          data: topItems.map(item => item.quantity),
+          backgroundColor: getColor('redAccent.500', '#F44336'),
+        },
+      ],
+    };
+  };
+
+  const stockLevelsData = prepareStockLevelsData();
+  const topSellingData = prepareTopSellingItemsData();
 
   if (loading) {
     return (
@@ -256,7 +318,7 @@ const Dashboard = () => {
           <Typography variant="h5" fontWeight="600" color={getColor('grey.100', '#ffffff')} mb="10px">
             Stock Level Trends
           </Typography>
-          <LineChart isDashboard={true} data={items} />
+          <BarChart isDashboard={true} data={stockLevelsData} />
         </Box>
 
         <Box
@@ -333,7 +395,7 @@ const Dashboard = () => {
           <Typography variant="h5" fontWeight="600" color={getColor('grey.100', '#ffffff')}>
             Top Selling Items
           </Typography>
-          <BarChart isDashboard={true} data={items} />
+          <BarChart isDashboard={true} data={topSellingData} />
         </Box>
 
         <Box gridColumn="span 6" gridRow="span 2" backgroundColor={primaryColor} p="30px" onClick={() => navigate("/alerts")}>

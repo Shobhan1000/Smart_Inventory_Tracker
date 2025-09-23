@@ -1,14 +1,39 @@
 import { ResponsivePie } from "@nivo/pie";
 import { tokens } from "../theme";
 import { useTheme } from "@mui/material";
-import { mockPieData as data } from "../data/mockData";
 
-const PieChart = () => {
+const PieChart = ({ data }) => {
   const theme = useTheme();
   const colors = tokens(theme.palette.mode);
+
+  // If no data is provided, show a message
+  if (!data || !data.labels || data.labels.length === 0) {
+    return (
+      <div style={{ 
+        height: '100%', 
+        display: 'flex', 
+        alignItems: 'center', 
+        justifyContent: 'center',
+        color: colors.grey[100]
+      }}>
+        No data available for the chart
+      </div>
+    );
+  }
+
+  // Transform the data for Nivo pie chart
+  const nivoData = data.labels.map((label, index) => ({
+    id: label,
+    label: label,
+    value: data.datasets[0].data[index],
+    color: data.datasets[0].backgroundColor 
+      ? data.datasets[0].backgroundColor[index] 
+      : `hsl(${(index * 360) / data.labels.length}, 70%, 60%)`
+  }));
+
   return (
     <ResponsivePie
-      data={data}
+      data={nivoData}
       theme={{
         axis: {
           domain: {
@@ -87,7 +112,7 @@ const PieChart = () => {
           itemsSpacing: 0,
           itemWidth: 100,
           itemHeight: 18,
-          itemTextColor: "#999",
+          itemTextColor: colors.grey[100],
           itemDirection: "left-to-right",
           itemOpacity: 1,
           symbolSize: 18,
@@ -96,7 +121,7 @@ const PieChart = () => {
             {
               on: "hover",
               style: {
-                itemTextColor: "#000",
+                itemTextColor: colors.grey[100],
               },
             },
           ],

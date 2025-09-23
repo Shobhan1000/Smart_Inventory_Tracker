@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { Box, Typography, useTheme, Button, Dialog, DialogTitle, DialogContent, DialogActions, TextField, MenuItem } from "@mui/material";
 import { DataGrid } from "@mui/x-data-grid";
 import { tokens } from "../../theme";
@@ -14,6 +14,7 @@ const Inventory = () => {
   const [selectionModel, setSelectionModel] = useState([]);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [itemsToDelete, setItemsToDelete] = useState([]);
+  const [filterType, setFilterType] = useState("All");
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editItem, setEditItem] = useState(null);
@@ -130,7 +131,13 @@ const Inventory = () => {
   // Get supplier name from ID
   const getSupplierName = (supplierId) => {
     if (!supplierId) return "No Supplier";
-    const supplier = suppliers.find(s => s.id === supplierId);
+    
+    // Temporary: log the comparison to debug
+    const supplier = suppliers.find(s => {
+      const match = String(s.id) === String(supplierId);
+      return match;
+    });
+    
     return supplier ? supplier.supplierName : "Supplier Not Found";
   };
 
@@ -203,6 +210,17 @@ const Inventory = () => {
     setItemsToDelete([]);
   };
 
+// -------------------- FILTERED ITEMS --------------------
+const filteredItems = useMemo(() => {
+  if (filterType === "All") return items;
+
+  return items.filter(item => {
+    const quantity = item.quantity || 0;
+    const threshold = item.lowStockThreshold || 5;
+    const status = quantity <= threshold ? "low" : "ok";
+    return status === filterType.toLowerCase();
+  });
+}, [items, filterType]);
   const columns = [
     { 
       field: "id", 
@@ -222,7 +240,9 @@ const Inventory = () => {
       field: "supplier_id", 
       headerName: "Supplier", 
       flex: 1,
-      valueGetter: (params) => getSupplierName(params.value),
+      renderCell: (params) => {
+        return getSupplierName(params.value);
+      },
     },
     { 
       field: "lastRestocked", 
@@ -285,6 +305,19 @@ const Inventory = () => {
         >
           Delete Selected
         </Button>
+
+        {/* Filter Dropdown */}
+        <TextField
+          select
+          label="Filter"
+          value={filterType}
+          onChange={(e) => setFilterType(e.target.value)}
+          sx={{ minWidth: 150 }}
+        >
+          <MenuItem value="All">All</MenuItem>
+          <MenuItem value="ok">OK</MenuItem>
+          <MenuItem value="low">Low</MenuItem>
+        </TextField>
       </Box>
 
       {selectionModel.length > 0 && (
@@ -309,7 +342,7 @@ const Inventory = () => {
         }}
       >
         <DataGrid
-          rows={items}
+          rows={filteredItems}
           columns={columns}
           loading={loading}
           pageSize={10}

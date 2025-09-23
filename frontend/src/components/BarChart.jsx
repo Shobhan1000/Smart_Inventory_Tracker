@@ -1,17 +1,45 @@
 import { useTheme } from "@mui/material";
 import { ResponsiveBar } from "@nivo/bar";
 import { tokens } from "../theme";
-import { mockBarData as data } from "../data/mockData";
 
-const BarChart = ({ isDashboard = false }) => {
+const BarChart = ({ isDashboard = false, data }) => {
   const theme = useTheme();
   const colors = tokens(theme.palette.mode);
 
+  // If no data is provided, show a message
+  if (!data || !data.labels || data.labels.length === 0) {
+    return (
+      <div style={{ 
+        height: '100%', 
+        display: 'flex', 
+        alignItems: 'center', 
+        justifyContent: 'center',
+        color: colors.grey[100]
+      }}>
+        No data available for the chart
+      </div>
+    );
+  }
+
+  // Transform the data for Nivo bar chart
+  const nivoData = data.labels.map((label, index) => {
+    const item = {
+      id: label,
+      [data.datasets[0].label]: data.datasets[0].data[index]
+    };
+    
+    // Add color if provided
+    if (data.datasets[0].backgroundColor && data.datasets[0].backgroundColor[index]) {
+      item.color = data.datasets[0].backgroundColor[index];
+    }
+    
+    return item;
+  });
+
   return (
     <ResponsiveBar
-      data={data}
+      data={nivoData}
       theme={{
-        // added
         axis: {
           domain: {
             line: {
@@ -39,13 +67,14 @@ const BarChart = ({ isDashboard = false }) => {
           },
         },
       }}
-      keys={["hot dog", "burger", "sandwich", "kebab", "fries", "donut"]}
-      indexBy="country"
+      keys={[data.datasets[0].label]}
+      indexBy="id"
       margin={{ top: 50, right: 130, bottom: 50, left: 60 }}
       padding={0.3}
       valueScale={{ type: "linear" }}
       indexScale={{ type: "band", round: true }}
-      colors={{ scheme: "nivo" }}
+      colors={data.datasets[0].backgroundColor ? 
+        data.datasets[0].backgroundColor : { scheme: "nivo" }}
       defs={[
         {
           id: "dots",
@@ -75,8 +104,8 @@ const BarChart = ({ isDashboard = false }) => {
       axisBottom={{
         tickSize: 5,
         tickPadding: 5,
-        tickRotation: 0,
-        legend: isDashboard ? undefined : "country", // changed
+        tickRotation: isDashboard ? 0 : 45,
+        legend: isDashboard ? undefined : data.datasets[0].label,
         legendPosition: "middle",
         legendOffset: 32,
       }}
@@ -84,7 +113,7 @@ const BarChart = ({ isDashboard = false }) => {
         tickSize: 5,
         tickPadding: 5,
         tickRotation: 0,
-        legend: isDashboard ? undefined : "food", // changed
+        legend: isDashboard ? undefined : "Value",
         legendPosition: "middle",
         legendOffset: -40,
       }}
@@ -121,7 +150,7 @@ const BarChart = ({ isDashboard = false }) => {
       ]}
       role="application"
       barAriaLabel={function (e) {
-        return e.id + ": " + e.formattedValue + " in country: " + e.indexValue;
+        return e.id + ": " + e.formattedValue;
       }}
     />
   );

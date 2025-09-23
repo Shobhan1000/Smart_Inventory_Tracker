@@ -35,6 +35,7 @@ class ItemUpdate(BaseModel):
 
 class Item(ItemBase):
     id: uuid.UUID
+    supplier_id: uuid.UUID
 
     class Config:
         orm_mode = True
